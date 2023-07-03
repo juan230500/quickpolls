@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"quickpolls/database"
+	"strconv"
 
 	"github.com/gorilla/mux"
 )
@@ -88,11 +89,45 @@ func sendVote(w http.ResponseWriter, r *http.Request) {
 
 	var vote database.Vote
 	_ = json.NewDecoder(r.Body).Decode(&vote)
+
+	var option database.Option
+	database.DB.Preload("Votes").First(&option, "ID = ?", vote.OptionID)
+
+	repeated := false
+
+	for _, v := range option.Votes {
+		if v.UserID == tokenClaims.ID {
+			repeated = true
+			break
+		}
+	}
+
+	if repeated {
+		json.NewEncoder(w).Encode(struct {
+			Error string
+		}{
+			"User can't vote twice for same option",
+		})
+		return
+	}
+
 	vote.UserID = tokenClaims.ID
 
 	database.DB.Create(&vote)
 
 	json.NewEncoder(w).Encode(vote)
+}
+
+func showPoll(w http.ResponseWriter, r *http.Request) {
+	// tokenClaims := r.Context().Value("token").(*Claims)
+
+	vars := mux.Vars(r)
+	pollID, _ := strconv.Atoi(vars["id"])
+
+	var poll database.Poll
+	database.DB.Preload("Questions").Preload("Questions.Options").Preload("Questions.Options.Votes").First(&poll, "ID = ?", pollID)
+
+	json.NewEncoder(w).Encode(poll)
 }
 
 func main() {
@@ -106,6 +141,7 @@ func main() {
 	s.HandleFunc("/createPoll", createPoll).Methods("POST")
 	s.HandleFunc("/getPolls", getPolls).Methods("GET")
 	s.HandleFunc("/sendVote", sendVote).Methods("POST")
+	s.HandleFunc("/showPoll/{id}", showPoll).Methods("GET")
 
 	http.ListenAndServe(":8000", router)
 }
